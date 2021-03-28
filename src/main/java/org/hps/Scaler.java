@@ -8,6 +8,7 @@ import org.apache.kafka.clients.admin.*;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.Configurable;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
 import org.joda.time.DateTime;
@@ -21,90 +22,28 @@ import org.apache.logging.log4j.LogManager;
 
 public class Scaler {
 
-
-
     // this code is functional but need refactoring
 
-    public static final String TOPIC_NAME = "testtopic2";
     public static final String CONSUMER_GROUP = "testgroup2";
-    public static final List<String> TOPIC_LIST = Collections.singletonList(TOPIC_NAME);
-    public static final List<String> CONSUMER_GRP_LIST = Collections.singletonList(CONSUMER_GROUP);
     public static  int NUM_PARTITIONS;
-    public static final short REP_FACTOR = 1;
-
-
     static boolean  scaled = false;
     public static  AdminClient admin = null;
 
-    static int scale = 2;
-
     private static final Logger log = LogManager.getLogger(Scaler.class);
-
-    private static Properties consumerGroupProps;
-    private static Properties metadataConsumerProps;
-    private static KafkaConsumer<byte[], byte[]> metadataConsumer;
-
-
-   /* @Override
-    public void configure(Map<String, ?> configs) {
-
-        // Construct Properties from config map
-        consumerGroupProps = new Properties();
-        for (final Map.Entry<String, ?> prop : configs.entrySet()) {
-            consumerGroupProps.put(prop.getKey(), prop.getValue());
-        }
-
-        // group.id must be defined
-        final String groupId = "testgroup2";//consumerGroupProps.getProperty(ConsumerConfig.GROUP_ID_CONFIG);
-
-
-        // Create a new consumer that can be used to get lag metadata for the consumer group
-        metadataConsumerProps = new Properties();
-        metadataConsumerProps.putAll(consumerGroupProps);
-        metadataConsumerProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-        final String clientId = groupId + ".metadada";
-        metadataConsumerProps.put(ConsumerConfig.CLIENT_ID_CONFIG, clientId);
-
-        log.info(
-                "Configured LagBasedPartitionAssignor with values:\n"
-                        + "\tgroup.id = {}\n"
-                        + "\tclient.id = {}\n",
-                groupId,
-                clientId
-        );
-
-    }*/
-
-
 
     public static void main(String[] args) throws ExecutionException, InterruptedException {
 
 
-        ///////////////////testing a metadataconsumer to enforcerebelabce////////////////////
-        Properties props2 = new Properties();
-        props2.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "my-cluster-kafka-bootstrap:9092");
-        props2.put(ConsumerConfig.GROUP_ID_CONFIG, "testgroup2");
-
-        props2.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-
-        //props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, config.getAutoOffsetReset());
-        props2.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
-        props2.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
-        // props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
-
-        log.info("creating meta data consumer");
-        if (metadataConsumer == null) {
-            metadataConsumer = new KafkaConsumer<>(props2);
-            log.info("created meta data consumer");
-
-        }
+        //TODO creating a metaconsumer to enforce rebalance
+//        MetaDataConsumer consumer = new MetaDataConsumer();
+//        consumer.createMetaConsumer();
+//        consumer.consumerEnforceRebalance();
 
         //String bootstrapServers = System.getenv("BOOTSTRAP_SERVERS");
         //String topicg = System.getenv("TOPIC");
         Long sleep = Long.valueOf(System.getenv("SLEEP"));
         Long waitingTime = Long.valueOf(System.getenv("WAITING_TIME"));
         boolean firstIteration = true;
-
 
         log.info("sleep is {}", sleep);
 
@@ -124,24 +63,9 @@ public class Scaler {
         Map<TopicPartition, Long> previousPartitionToLastOffset = new HashMap<>();
         Map<TopicPartition, Long> currentPartitionToLastOffset = new HashMap<>();
 
-
         ///////////////////////////////////////////////////////////////////////////////////////
 
-
         while (true) {
-
-            ///////////////////testing number of replicas////////////////////
-
-            try (final KubernetesClient k8ss = new DefaultKubernetesClient()) {
-                ServiceAccount fabric8 = new ServiceAccountBuilder().withNewMetadata().withName("fabric8").endMetadata().build();
-                k8ss.serviceAccounts().inNamespace("default").createOrReplace(fabric8);
-                int replicas = k8ss.apps().deployments().inNamespace("default").withName("cons1pss").get().getSpec().getReplicas();
-
-                log.info("current number of consumer replicas is {}", replicas);
-            }
-                // firstIteration = true;
-
-            //////////////////////////////////////////////////////////
 
             Map<TopicPartition, Long> partitionToLag = new HashMap<>();
 
@@ -165,7 +89,6 @@ public class Scaler {
 
             Map<TopicPartition, OffsetSpec> requestLatestOffsets = new HashMap<>();
             Map<TopicPartition, OffsetSpec> requestEarliestOffsets = new HashMap<>();
-            DateTime resetTo = new DateTime().minusHours(2);
             // For all topics and partitions that have offsets committed by the group, get their latest offsets, earliest offsets
             // and the offset for 2h ago. Note that I'm populating the request for 2h old offsets, but not using them.
             // You can swap the use of "Earliest" in the `alterConsumerGroupOffset` example with the offsets from 2h ago
@@ -382,31 +305,6 @@ public class Scaler {
     }
 
 
-
-
-
-    public static  Map<String, Set<TopicPartition>> getConsumerGroupMemberInfo(ConsumerGroupDescription consumerGroupDescription) {
-        Map<String, Set<TopicPartition>> memberToTopicPartitionMap = new HashMap<>();
-        for (MemberDescription memberDescription : consumerGroupDescription.members()) {
-            MemberAssignment memberAssignment = memberDescription.assignment();
-            Set<TopicPartition> topicPartitions = memberAssignment.topicPartitions();
-            memberToTopicPartitionMap.put(memberDescription.consumerId(), topicPartitions);
-        }
-        return memberToTopicPartitionMap;
-    }
-
-
-
-   static  Map<TopicPartition, Long> getConsumerGroupOffsetInfo(String consumerGroupID)
-            throws ExecutionException, InterruptedException {
-        ListConsumerGroupOffsetsResult listConsumerGroupOffsetsResult =
-                admin.listConsumerGroupOffsets(consumerGroupID);
-        KafkaFuture<Map<TopicPartition, OffsetAndMetadata>> futureOfConsumerGroupOffsetResult =
-                listConsumerGroupOffsetsResult.partitionsToOffsetAndMetadata();
-        Map<TopicPartition, OffsetAndMetadata> consumerGroupOffsetInfo = futureOfConsumerGroupOffsetResult.get();
-        return consumerGroupOffsetInfo.entrySet().stream().
-                collect(Collectors.toMap(Map.Entry::getKey, x -> x.getValue().offset()));
-    }
 }
 
 
